@@ -1,3 +1,4 @@
+# An intuitive, Google Tag Manager-inspired system to embed, govern, and utilize anchor tags for deterministic agent planning and validation in complex codebases.
 
 ## Run Locally
 

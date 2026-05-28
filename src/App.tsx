@@ -16,7 +16,10 @@ import {
   Terminal,
   Clock,
   Sparkles,
-  Database
+  Database,
+  Download,
+  Copy,
+  Check
 } from "lucide-react";
 
 import { CodeFile, AnchorTag, AnchorTagType, TriggerRule, TagVariable } from "./types";
@@ -36,6 +39,8 @@ export default function App() {
   // Active UI views
   const [selectedFileName, setSelectedFileName] = useState<string>("api-gateway.ts");
   const [activeTab, setActiveTab] = useState<"code" | "meta">("code"); // toggles details workspace pane
+  const [panelTab, setPanelTab] = useState<"simulator" | "manifest">("simulator");
+  const [copiedManifest, setCopiedManifest] = useState<boolean>(false);
   
   // Agent simulator state
   const [agentPrompt, setAgentPrompt] = useState<string>("");
@@ -48,6 +53,40 @@ export default function App() {
     relevantTags: string[];
     errorMessage?: string;
   } | null>(null);
+
+  // Compile manifest metadata dynamically in standard schema
+  const compiledManifestJson = useMemo(() => {
+    return JSON.stringify({
+      $schema: "https://anchormesh.io/schemas/v1/anchor-tag-manifest.json",
+      version: "1.2.0",
+      generatedAt: new Date().toISOString(),
+      governance: {
+        enforceStrictCompliance: variables.find(v => v.id === "VAR-02")?.value === "true",
+        permittedPrefixes: variables.find(v => v.id === "VAR-03")?.value?.split(",").map(p => p.trim()) || []
+      },
+      anchors: tags,
+      triggers: triggers,
+      variables: variables
+    }, null, 2);
+  }, [tags, triggers, variables]);
+
+  const handleDownloadManifestFile = () => {
+    const blob = new Blob([compiledManifestJson], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "anchor-tag-manifest.json";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleCopyManifestToClipboard = () => {
+    navigator.clipboard.writeText(compiledManifestJson);
+    setCopiedManifest(true);
+    setTimeout(() => setCopiedManifest(false), 2000);
+  };
 
   // Active interactive selections
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
@@ -430,108 +469,188 @@ export default function App() {
           />
         </section>
 
-        {/* Row 2 Middle: Dynamic Agent Workspace AI Simulator Term (Col span 5) */}
+        {/* Row 2 Middle: Dynamic Agent Workspace AI Simulator and Manifest Exporter Term (Col span 5) */}
         <section className="col-span-12 lg:col-span-5 bg-[#0b0c0d] border border-slate-900 rounded-2xl flex flex-col overflow-hidden shadow-xl" id="bento-query-agent">
-          <div className="p-4 border-b border-slate-900 flex justify-between items-center bg-slate-900/10">
+          <div className="p-4 border-b border-slate-900 flex flex-col sm:flex-row justify-between items-start sm:items-center bg-slate-900/10 gap-2">
             <div className="flex items-center gap-2">
               <Terminal className="w-4 h-4 text-indigo-400" />
               <h2 className="text-xs font-bold uppercase tracking-widest text-slate-400">AI AGENT DETERMINISTIC RUNTIME</h2>
             </div>
-            <div className="flex gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-slate-800"></span>
-              <span className="w-2.5 h-2.5 rounded-full bg-slate-700"></span>
-              <span className="w-2 h-2 rounded-full bg-slate-800"></span>
+            
+            {/* Elegant Tab Switchers */}
+            <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-850">
+              <button
+                onClick={() => setPanelTab("simulator")}
+                className={`px-3 py-1 text-[10px] uppercase font-bold rounded-lg cursor-pointer transition-all ${
+                  panelTab === "simulator"
+                    ? "bg-indigo-600/80 text-white shadow-sm"
+                    : "text-slate-500 hover:text-slate-300"
+                }`}
+              >
+                Agent Simulator
+              </button>
+              <button
+                onClick={() => setPanelTab("manifest")}
+                className={`px-3 py-1 text-[10px] uppercase font-bold rounded-lg cursor-pointer transition-all ${
+                  panelTab === "manifest"
+                    ? "bg-indigo-600/80 text-white shadow-sm"
+                    : "text-slate-500 hover:text-slate-300"
+                }`}
+              >
+                Download Manifest
+              </button>
             </div>
           </div>
 
-          <div className="p-5 flex-1 flex flex-col space-y-4 font-mono text-xs">
-            <div className="text-slate-500 leading-relaxed">
-              // Enter a request context. Observe how the anchor tag manifest resolves exact code blocks for LLMs instantly.
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Agent Action / Prompt</label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  placeholder="e.g. Audit checkout security guards or find deprecated hooks"
-                  value={agentPrompt}
-                  onChange={(e) => setAgentPrompt(e.target.value)}
-                  className="flex-1 bg-slate-950 border border-slate-850 rounded-xl px-4 py-2.5 text-white font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500 placeholder:text-neutral-600"
-                />
-                <button
-                  onClick={triggerSimulation}
-                  disabled={isSimulating || !agentPrompt.trim()}
-                  className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white font-sans font-bold text-xs px-4 rounded-xl flex items-center gap-1 cursor-pointer transition-colors"
-                >
-                  {isSimulating ? "Scouring..." : <><Play className="w-3 h-3 fill-white" /> Run</>}
-                </button>
+          {/* Tab Content A: Agent Simulator */}
+          {panelTab === "simulator" && (
+            <div className="p-5 flex-1 flex flex-col space-y-4 font-mono text-xs">
+              <div className="text-slate-500 leading-relaxed">
+                // Enter a request context. Observe how the anchor tag manifest resolves exact code blocks for LLMs instantly.
               </div>
-            </div>
 
-            {/* Simulated Comparison Terminal Output */}
-            {simResults ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2">
-                {/* Simulation A: Naive approach */}
-                <div className="bg-slate-950 border border-slate-900 rounded-xl p-3 flex flex-col justify-between">
-                  <div>
-                    <div className="flex items-center justify-between text-neutral-400 border-b border-slate-900 pb-1.5 mb-2">
-                      <span className="font-bold text-[10px]">A: NAIVE REP SEARCH</span>
-                      <span className="text-rose-400 text-[9px] bg-rose-950/20 px-1 py-0.5 rounded border border-rose-900/30 font-bold">BLIND SCAN</span>
+              <div className="space-y-2">
+                <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Agent Action / Prompt</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="e.g. Audit checkout security guards or find deprecated hooks"
+                    value={agentPrompt}
+                    onChange={(e) => setAgentPrompt(e.target.value)}
+                    className="flex-1 bg-slate-950 border border-slate-850 rounded-xl px-4 py-2.5 text-white font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500 placeholder:text-neutral-600"
+                  />
+                  <button
+                    onClick={triggerSimulation}
+                    disabled={isSimulating || !agentPrompt.trim()}
+                    className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white font-sans font-bold text-xs px-4 rounded-xl flex items-center gap-1 cursor-pointer transition-colors"
+                  >
+                    {isSimulating ? "Scouring..." : <><Play className="w-3 h-3 fill-white" /> Run</>}
+                  </button>
+                </div>
+              </div>
+
+              {/* Simulated Comparison Terminal Output */}
+              {simResults ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2">
+                  {/* Simulation A: Naive approach */}
+                  <div className="bg-slate-950 border border-slate-900 rounded-xl p-3 flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center justify-between text-neutral-400 border-b border-slate-900 pb-1.5 mb-2">
+                        <span className="font-bold text-[10px]">A: NAIVE REP SEARCH</span>
+                        <span className="text-rose-400 text-[9px] bg-rose-950/20 px-1 py-0.5 rounded border border-rose-900/30 font-bold">BLIND SCAN</span>
+                      </div>
+                      <div className="text-[10px] text-slate-400 h-40 overflow-y-auto font-mono leading-5 whitespace-pre-wrap select-text scrollbar-thin">
+                        {simResults.naiveOutput}
+                      </div>
                     </div>
-                    <div className="text-[10px] text-slate-400 h-40 overflow-y-auto font-mono leading-5 whitespace-pre-wrap select-text scrollbar-thin">
-                      {simResults.naiveOutput}
+                    <div className="pt-2 border-t border-slate-900 mt-2 flex justify-between items-center text-[10px] text-slate-500 font-bold">
+                      <span>Est. Context Load:</span>
+                      <span className="text-rose-400">{simResults.naiveTokenCalc} tokens</span>
                     </div>
                   </div>
-                  <div className="pt-2 border-t border-slate-900 mt-2 flex justify-between items-center text-[10px] text-slate-500 font-bold">
-                    <span>Est. Context Load:</span>
-                    <span className="text-rose-400">{simResults.naiveTokenCalc} tokens</span>
+
+                  {/* Simulation B: Anchor Approach */}
+                  <div className="bg-slate-950 border border-indigo-950 rounded-xl p-3 flex flex-col justify-between ring-1 ring-indigo-500/10">
+                    <div>
+                      <div className="flex items-center justify-between text-indigo-400 border-b border-indigo-950 pb-1.5 mb-2">
+                        <span className="font-bold text-[10px]">B: ANCHOR-ISO CODES</span>
+                        <span className="text-indigo-400 text-[9px] bg-indigo-950/40 px-1 py-0.5 rounded border border-indigo-700/30 font-bold">100% RELIABLE</span>
+                      </div>
+                      <div className="text-[10px] text-slate-200 h-40 overflow-y-auto font-mono leading-5 whitespace-pre-wrap select-text scrollbar-thin">
+                        {simResults.anchorOutput}
+                      </div>
+                    </div>
+                    <div className="pt-2 border-t border-indigo-950 mt-2 flex justify-between items-center text-[10px] text-indigo-400 font-bold">
+                      <span>Targeted Context Load:</span>
+                      <span className="text-emerald-400">{simResults.anchorTokenCalc} tokens (reduced!)</span>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex-1 bg-slate-950 border border-slate-900 rounded-xl p-8 flex flex-col items-center justify-center text-center">
+                  <Cpu className={`w-8 h-8 text-slate-800 mb-2 ${isSimulating ? "animate-spin text-indigo-400" : ""}`} />
+                  <p className="text-slate-500 text-[11px] max-w-xs leading-relaxed">
+                    {isSimulating 
+                      ? "Assembling context tokens, performing deterministic manifests query & executing client API pipeline..."
+                      : "Wait for task submit. Simulated agent scans the ledger manifest to target exact file lines and prevent token waste."
+                    }
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Tab Content B: Live anchor-tag-manifest.json Exporter */}
+          {panelTab === "manifest" && (
+            <div className="p-5 flex-1 flex flex-col space-y-4 font-sans text-xs">
+              <div className="bg-indigo-950/20 border border-indigo-900/30 p-3.5 rounded-xl text-[11px] text-indigo-200 leading-relaxed">
+                <span className="font-bold text-indigo-400 block mb-0.5">🚀 Direct Ingestion Manifest ready!</span>
+                Feed this compiled <code className="bg-indigo-950 px-1 py-0.5 rounded border border-indigo-900 text-white">anchor-tag-manifest.json</code> into any AI-agentic coding system (such as custom agents, Cursor context files, or terminal environments) to guide automatic refactoring deterministically.
+              </div>
+
+              {/* Dynamic JSON Viewport */}
+              <div className="relative group flex-1 min-h-[180px] flex flex-col bg-slate-950 border border-slate-900 rounded-xl overflow-hidden shadow-inner">
+                <div className="p-2.5 bg-slate-900/60 border-b border-slate-900 flex justify-between items-center text-[10px] text-slate-400 font-mono">
+                  <span>LIVE COMPILED SCHEMA OUTPUT</span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleCopyManifestToClipboard}
+                      className="px-2.5 py-1 bg-slate-950 hover:bg-slate-800 text-slate-300 hover:text-white rounded border border-slate-800 cursor-pointer flex items-center gap-1.5 transition-colors"
+                      title="Copy JSON representation"
+                    >
+                      {copiedManifest ? (
+                        <>
+                          <Check className="w-3 h-3 text-emerald-400" />
+                          <span className="text-emerald-400 font-semibold font-sans">Copied!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3 h-3 text-slate-400" />
+                          <span className="font-sans">Copy Payload</span>
+                        </>
+                      )}
+                    </button>
+                    
+                    <button
+                      onClick={handleDownloadManifestFile}
+                      className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded border border-indigo-700 cursor-pointer flex items-center gap-1.5 transition-colors font-sans font-semibold"
+                      title="Generate local download"
+                    >
+                      <Download className="w-3 h-3" />
+                      <span>Download</span>
+                    </button>
                   </div>
                 </div>
 
-                {/* Simulation B: Anchor Approach */}
-                <div className="bg-slate-950 border border-indigo-950 rounded-xl p-3 flex flex-col justify-between ring-1 ring-indigo-500/10">
-                  <div>
-                    <div className="flex items-center justify-between text-indigo-400 border-b border-indigo-950 pb-1.5 mb-2">
-                      <span className="font-bold text-[10px]">B: ANCHOR-ISO CODES</span>
-                      <span className="text-indigo-400 text-[9px] bg-indigo-950/40 px-1 py-0.5 rounded border border-indigo-700/30 font-bold">100% RELIABLE</span>
-                    </div>
-                    <div className="text-[10px] text-slate-200 h-40 overflow-y-auto font-mono leading-5 whitespace-pre-wrap select-text scrollbar-thin">
-                      {simResults.anchorOutput}
-                    </div>
-                  </div>
-                  <div className="pt-2 border-t border-indigo-950 mt-2 flex justify-between items-center text-[10px] text-indigo-400 font-bold">
-                    <span>Targeted Context Load:</span>
-                    <span className="text-emerald-400">{simResults.anchorTokenCalc} tokens (reduced!)</span>
-                  </div>
+                <div className="flex-1 p-3 overflow-y-auto font-mono text-[10px] text-indigo-300 leading-relaxed max-h-[220px] select-text scrollbar-thin">
+                  <pre>{compiledManifestJson}</pre>
                 </div>
               </div>
-            ) : (
-              <div className="flex-1 bg-slate-950 border border-slate-900 rounded-xl p-8 flex flex-col items-center justify-center text-center">
-                <Cpu className={`w-8 h-8 text-slate-800 mb-2 ${isSimulating ? "animate-spin text-indigo-400" : ""}`} />
-                <p className="text-slate-500 text-[11px] max-w-xs leading-relaxed">
-                  {isSimulating 
-                    ? "Assembling context tokens, performing deterministic manifests query & executing client API pipeline..."
-                    : "Wait for task submit. Simulated agent scans the ledger manifest to target exact file lines and prevent token waste."
-                  }
-                </p>
-              </div>
-            )}
-          </div>
+            </div>
+          )}
 
+          {/* Workspace Controls Footer */}
           <div className="p-3 bg-indigo-950/20 border-t border-slate-900/80 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <div className="w-1.5 h-1.5 bg-indigo-400 animate-ping rounded-full"></div>
-              <span className="text-[10px] text-slate-400 font-sans font-medium">Ready for AI refactoring simulations.</span>
+              <span className="text-[10px] text-slate-400 font-sans font-medium">
+                {panelTab === "simulator" ? "Ready for AI refactoring simulations." : "Manifest automatically stays in sync."}
+              </span>
             </div>
-            <button 
-              onClick={() => {
-                setAgentPrompt("Verify all cryptographic hash signatures inside our billing ledger or secure router gates");
-              }}
-              className="text-[9px] underline text-indigo-400 hover:text-indigo-300 font-sans cursor-pointer font-bold uppercase"
-            >
-              Fill Sample Task
-            </button>
+            {panelTab === "simulator" ? (
+              <button 
+                onClick={() => {
+                  setAgentPrompt("Verify all cryptographic hash signatures inside our billing ledger or secure router gates");
+                }}
+                className="text-[9px] underline text-indigo-400 hover:text-indigo-300 font-sans cursor-pointer font-bold uppercase"
+              >
+                Fill Sample Task
+              </button>
+            ) : (
+              <span className="text-[10px] text-indigo-400 font-mono font-bold">
+                {tags.length} Anchors Registered
+              </span>
+            )}
           </div>
         </section>
 

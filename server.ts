@@ -204,6 +204,31 @@ ${tagDetails.map(t => `   - Modifying \`${t.file}\` directly around anchor tag \
     }
   });
 
+  // API endpoint for compiled anchor tag manifest JSON generation
+  app.post("/api/anchor-tag-manifest.json", (req, res) => {
+    try {
+      const { manifest, triggers, variables } = req.body;
+      const formattedOutput = {
+        $schema: "https://anchormesh.io/schemas/v1/anchor-tag-manifest.json",
+        version: "1.2.0",
+        generatedAt: new Date().toISOString(),
+        governance: {
+          enforceStrictCompliance: variables?.find((v: any) => v.id === "VAR-02")?.value === "true",
+          permittedPrefixes: variables?.find((v: any) => v.id === "VAR-03")?.value?.split(",").map((p: string) => p.trim()) || []
+        },
+        anchors: manifest || [],
+        triggers: triggers || [],
+        variables: variables || []
+      };
+
+      res.setHeader("Content-Type", "application/json");
+      res.setHeader("Content-Disposition", "attachment; filename=anchor-tag-manifest.json");
+      return res.status(200).send(JSON.stringify(formattedOutput, null, 2));
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message || "Failed to generate manifest download." });
+    }
+  });
+
   // Serve static assets in production, otherwise use Vite middleware
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

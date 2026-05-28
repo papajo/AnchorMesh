@@ -3,6 +3,8 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
+import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -13,24 +15,63 @@ async function startServer() {
 
   app.use(express.json());
 
-  // Shared lazy initializer for Gemini API
-  let aiClient: GoogleGenAI | null = null;
-  function getAiClient(): GoogleGenAI {
-    if (!aiClient) {
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey || apiKey === "MY_GEMINI_API_KEY") {
-        throw new Error("GEMINI_API_KEY is not configured. Please supply a valid key under Settings > Secrets.");
+  const MODEL_PROVIDER = (process.env.MODEL_PROVIDER || "gemini").toLowerCase();
+
+  // Lazy clients per provider
+  let geminiClient: GoogleGenAI | null = null;
+  let anthropicClient: Anthropic | null = null;
+  let openaiClient: OpenAI | null = null;
+
+  // Unified generate function — returns plain text regardless of provider
+  async function generateText(prompt: string): Promise<string> {
+    if (MODEL_PROVIDER === "anthropic") {
+      if (!anthropicClient) {
+        const apiKey = process.env.ANTHROPIC_API_KEY;
+        if (!apiKey || apiKey === "MY_ANTHROPIC_API_KEY")
+          throw new Error("ANTHROPIC_API_KEY is not configured. Please supply a valid key under Settings > Secrets.");
+        anthropicClient = new Anthropic({ apiKey });
       }
-      aiClient = new GoogleGenAI({
-        apiKey,
-        httpOptions: {
-          headers: {
-            "User-Agent": "aistudio-build",
-          },
-        },
+      const msg = await anthropicClient.messages.create({
+        model: "claude-sonnet-4-5",
+        max_tokens: 1024,
+        messages: [{ role: "user", content: prompt }],
       });
+      return (msg.content[0] as { text: string }).text;
+
+    } else if (MODEL_PROVIDER === "openai") {
+      if (!openaiClient) {
+        const apiKey = process.env.OPENAI_API_KEY;
+        if (!apiKey || apiKey === "MY_OPENAI_API_KEY")
+          throw new Error("OPENAI_API_KEY is not configured. Please supply a valid key under Settings > Secrets.");
+        openaiClient = new OpenAI({ apiKey });
+      }
+      const chat = await openaiClient.chat.completions.create({
+        model: "gpt-4o",
+        messages: [{ role: "user", content: prompt }],
+      });
+      return chat.choices[0].message.content ?? "";
+
+    } else {
+      // Default: Gemini
+      if (!geminiClient) {
+        const apiKey = process.env.GEMINI_API_KEY;
+        if (!apiKey || apiKey === "MY_GEMINI_API_KEY")
+          throw new Error("GEMINI_API_KEY is not configured. Please supply a valid key under Settings > Secrets.");
+        geminiClient = new GoogleGenAI({
+          apiKey,
+          httpOptions: {
+            headers: {
+              "User-Agent": "aistudio-build",
+            },
+          },
+        });
+      }
+      const res = await geminiClient.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: prompt,
+      });
+      return res.text ?? "";
     }
-    return aiClient;
   }
 
   // API endpoint for simulating AI agents and querying the codebase
@@ -43,7 +84,6 @@ async function startServer() {
       }
 
       // 1. Simulation A: Naive Full Repository Search
-      // We pass ALL files and ALL content.
       const naiveContext = files.map((f: any) => `--- File: ${f.name} ---\n${f.content}`).join("\n\n");
       const naivePrompt = `
 You are acting as an AI Coding Agent refactoring a software system.
@@ -61,12 +101,9 @@ Keep your response concise but complete.
 `;
 
       // 2. Simulation B: Deterministic Anchor Planning
-      // We filter down the codebase to ONLY files and specifically tagged sections matching selected tags,
-      // or if no selectedTags are specified, we search the manifest to see which tags match the prompt's intent.
       let relevantTags = selectedTags || [];
-      
+
       if (relevantTags.length === 0 && manifest && manifest.length > 0) {
-        // Find tags based on keywords matches in prompt or tag descriptions
         const keywords = prompt.toLowerCase().split(/\s+/);
         relevantTags = manifest
           .filter((t: any) => {
@@ -74,20 +111,17 @@ Keep your response concise but complete.
             const matchId = t.id.toLowerCase();
             const matchPurpose = (t.purpose || "").toLowerCase();
             const matchType = (t.type || "").toLowerCase();
-            return keywords.some((kw: string) => 
+            return keywords.some((kw: string) =>
               kw.length > 2 && (matchName.includes(kw) || matchId.includes(kw) || matchPurpose.includes(kw) || matchType.includes(kw))
             );
           })
           .map((t: any) => t.id);
-        
-        // Default to a few of them if nothing matches
+
         if (relevantTags.length === 0) {
           relevantTags = manifest.slice(0, 2).map((t: any) => t.id);
         }
       }
 
-      // Build anchor isolated context
-      // For each relevant tag, extract context lines (the tagged line and surrounding 5 lines)
       const anchorSnippets: string[] = [];
       const tagDetails: any[] = [];
 
@@ -102,7 +136,6 @@ Keep your response concise but complete.
           return;
         }
 
-        // Search for the tag anchor comment in the file content
         const lines = file.content.split("\n");
         let foundLineIdx = -1;
         for (let i = 0; i < lines.length; i++) {
@@ -120,10 +153,9 @@ Keep your response concise but complete.
             const isTarget = lineNum === (foundLineIdx + 1);
             return `${isTarget ? ">>> " : "    "}[L${lineNum}] ${l}`;
           }).join("\n");
-          
+
           anchorSnippets.push(`--- File: ${file.name} | Anchor: @anchor[${tagId}] (${tag.name}) ---\nType: ${tag.type}\nPurpose: ${tag.purpose}\nCode Segment:\n${snippet}`);
         } else {
-          // Fallback if tag is orphaned
           anchorSnippets.push(`--- File: ${file.name} | [ORPHANED TAG] @anchor[${tagId}] (${tag.name}) ---\nType: ${tag.type}\nPurpose: ${tag.purpose}\nWarning: Anchor comment is missing in file code!`);
         }
       });
@@ -150,27 +182,14 @@ Keep your response concise but extremely specific.
       let errorMessage = "";
 
       try {
-        const ai = getAiClient();
-        
-        // Run both queries in parallel
-        const [naiveRes, anchorRes] = await Promise.all([
-          ai.models.generateContent({
-            model: "gemini-3.5-flash",
-            contents: naivePrompt,
-          }),
-          ai.models.generateContent({
-            model: "gemini-3.5-flash",
-            contents: anchorPrompt,
-          })
+        [naiveText, anchorText] = await Promise.all([
+          generateText(naivePrompt),
+          generateText(anchorPrompt),
         ]);
-
-        naiveText = naiveRes.text || "No response received.";
-        anchorText = anchorRes.text || "No response received.";
-      } catch (geminiError: any) {
+      } catch (aiError: any) {
         errorOccurred = true;
-        errorMessage = geminiError.message || "Unknown error";
-        
-        // Simulating highly descriptive and helpful fallback results if no API key is set yet
+        errorMessage = aiError.message || "Unknown error";
+
         naiveText = `### [MOCK PLAN] Naive Search Approach for: "${prompt}"
 
 1. **Approach**: Scanning all workspace files using a keyword search (e.g., regex / grep).
@@ -238,13 +257,16 @@ ${tagDetails.map(t => `   - Modifying \`${t.file}\` directly around anchor tag \
       }
 
       let generatedOutput: { files: any[]; anchors: any[] } | null = null;
-      let usedGemini = false;
+      let usedAI = false;
 
-      // Check if Gemini API key exists
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (apiKey && apiKey !== "MY_GEMINI_API_KEY") {
+      // Check if any API key is configured
+      const hasKey =
+        (MODEL_PROVIDER === "gemini" && process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "MY_GEMINI_API_KEY") ||
+        (MODEL_PROVIDER === "anthropic" && process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_API_KEY !== "MY_ANTHROPIC_API_KEY") ||
+        (MODEL_PROVIDER === "openai" && process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== "MY_OPENAI_API_KEY");
+
+      if (hasKey) {
         try {
-          const ai = getAiClient();
           const scanPrompt = `
 You are a deterministic software agent registry scanner for "AnchorMesh".
 Your task is to analyze the provided codebase files and automatically place high-value anchor comment annotations inside the file contents, then output both the updated files and a list of registered anchors.
@@ -276,7 +298,7 @@ Expected Structure:
     {
        "id": "SEC-GATEWAY-AUTH",
        "name": "Active Ingress Security Token Gate",
-       "type": "Security Check", 
+       "type": "Security Check",
        "file": "api-gateway.ts",
        "purpose": "Validates JSON Web Signatures in route headers before multiplexing payload down to services.",
        "severity": "high",
@@ -287,24 +309,15 @@ Expected Structure:
 }
 
 Codebase Files array:
-${JSON.stringify(files.map(f => ({ name: f.name, content: f.content, description: f.description })), null, 2)}
+${JSON.stringify(files.map((f: any) => ({ name: f.name, content: f.content, description: f.description })), null, 2)}
 `;
 
-          const response = await ai.models.generateContent({
-            model: "gemini-3.5-flash",
-            contents: scanPrompt,
-            config: {
-              responseMimeType: "application/json"
-            }
-          });
-
-          if (response.text) {
-            const cleanedText = response.text.replace(/```json/g, "").replace(/```/g, "").trim();
-            generatedOutput = JSON.parse(cleanedText);
-            usedGemini = true;
-          }
-        } catch (gemError) {
-          console.warn("Gemini generation failed, fallback to native parsing:", gemError);
+          const rawText = await generateText(scanPrompt);
+          const cleanedText = rawText.replace(/```json/g, "").replace(/```/g, "").trim();
+          generatedOutput = JSON.parse(cleanedText);
+          usedAI = true;
+        } catch (aiError) {
+          console.warn("AI generation failed, falling back to heuristic scanner:", aiError);
         }
       }
 
@@ -317,14 +330,11 @@ ${JSON.stringify(files.map(f => ({ name: f.name, content: f.content, description
           let lineAdded = false;
           const originalLines = file.content.split("\n");
           const modifiedLines: string[] = [];
-
           const lowerName = file.name.toLowerCase();
-          
-          // Let's analyze line by line
+
           for (let i = 0; i < originalLines.length; i++) {
             const line = originalLines[i];
-            
-            // Check for functional matches to place anchors
+
             if (!lineAdded) {
               let tagId = "";
               let tagName = "";
@@ -358,12 +368,11 @@ ${JSON.stringify(files.map(f => ({ name: f.name, content: f.content, description
                 tagSeverity = "low";
               }
 
-              if (tagId !== "" && !parsedAnchors.some(a => a.id === tagId)) {
-                // Add the anchor comment!
+              if (tagId !== "" && !parsedAnchors.some((a: any) => a.id === tagId)) {
                 const commentPrefix = lowerName.endsWith(".py") || lowerName.endsWith(".yaml") || lowerName.endsWith(".yml") ? "#" : "//";
                 modifiedLines.push(`${commentPrefix} @anchor[${tagId}] - ${tagName}`);
                 lineAdded = true;
-                
+
                 parsedAnchors.push({
                   id: tagId,
                   name: tagName,
@@ -386,15 +395,12 @@ ${JSON.stringify(files.map(f => ({ name: f.name, content: f.content, description
           });
         });
 
-        generatedOutput = {
-          files: parsedFiles,
-          anchors: parsedAnchors
-        };
+        generatedOutput = { files: parsedFiles, anchors: parsedAnchors };
       }
 
       return res.status(200).json({
         success: true,
-        engine: usedGemini ? "Gemini 3.5 Auto-scan" : "AnchorMesh Local Engine",
+        engine: usedAI ? `${MODEL_PROVIDER} auto-scan` : "AnchorMesh Local Engine",
         files: generatedOutput.files,
         anchors: generatedOutput.anchors
       });

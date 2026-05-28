@@ -1,0 +1,6 @@
+{
+  "name": "Codebase Anchor Tag Manager",
+  "description": "An intuitive, Google Tag Manager-inspired system to embed, govern, and utilize anchor tags for deterministic agent planning and validation in complex codebases.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

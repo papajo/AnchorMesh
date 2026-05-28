@@ -229,6 +229,182 @@ ${tagDetails.map(t => `   - Modifying \`${t.file}\` directly around anchor tag \
     }
   });
 
+  // API endpoint for automatic AI codebase scanning & anchor annotation insertion
+  app.post("/api/auto-generate-anchors", async (req, res) => {
+    try {
+      const { files } = req.body;
+      if (!files || !Array.isArray(files) || files.length === 0) {
+        return res.status(400).json({ error: "Missing or invalid files array for scanning" });
+      }
+
+      let generatedOutput: { files: any[]; anchors: any[] } | null = null;
+      let usedGemini = false;
+
+      // Check if Gemini API key exists
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (apiKey && apiKey !== "MY_GEMINI_API_KEY") {
+        try {
+          const ai = getAiClient();
+          const scanPrompt = `
+You are a deterministic software agent registry scanner for "AnchorMesh".
+Your task is to analyze the provided codebase files and automatically place high-value anchor comment annotations inside the file contents, then output both the updated files and a list of registered anchors.
+
+Anchor Definition:
+It is a single-line comment of form \`// @anchor[ANCHOR-ID]\` (use appropriate comment characters style for JavaScript/TypeScript, or # for Python/yaml) placed immediately before high-value architectural checkpoints, state-modifying gates, main API gates, secure functions, and database queries.
+Key Anchor Locations:
+- Security validation routines (Prefix: SEC-*)
+- External API calls and SDK clients (Prefix: API-*)
+- Database transactions, connection pooling, and operations (Prefix: DB-*)
+- Important governance/business rules processes (Prefix: GOV-*)
+- Router setups, gateway mappings, configs (Prefix: SYS-*)
+
+Rules:
+1. Do NOT overwhelm a file with anchors. Place exactly 1 or at most 2 anchors per file maximum.
+2. Keep Anchor IDs capital letters, e.g. SEC-GATEWAY-AUTH, DB-CONNECT, etc.
+3. Be careful to insert the anchor string directly in the code context as a valid line comment, and return the modified files.
+4. Output must be valid, well-formed JSON conforming exactly to the schema below. Respond ONLY with the JSON string, and never write markdown blocks like \`\`\`json.
+
+Expected Structure:
+{
+  "files": [
+    {
+       "name": "filename.ts",
+       "content": "the full updated content with the inline @anchor comments inserted at logical places"
+    }
+  ],
+  "anchors": [
+    {
+       "id": "SEC-GATEWAY-AUTH",
+       "name": "Active Ingress Security Token Gate",
+       "type": "Security Check", 
+       "file": "api-gateway.ts",
+       "purpose": "Validates JSON Web Signatures in route headers before multiplexing payload down to services.",
+       "severity": "high",
+       "createdBy": "AnchorMesh AI Auto-Scan",
+       "createdAt": "${new Date().toISOString()}"
+    }
+  ]
+}
+
+Codebase Files array:
+${JSON.stringify(files.map(f => ({ name: f.name, content: f.content, description: f.description })), null, 2)}
+`;
+
+          const response = await ai.models.generateContent({
+            model: "gemini-3.5-flash",
+            contents: scanPrompt,
+            config: {
+              responseMimeType: "application/json"
+            }
+          });
+
+          if (response.text) {
+            const cleanedText = response.text.replace(/```json/g, "").replace(/```/g, "").trim();
+            generatedOutput = JSON.parse(cleanedText);
+            usedGemini = true;
+          }
+        } catch (gemError) {
+          console.warn("Gemini generation failed, fallback to native parsing:", gemError);
+        }
+      }
+
+      // Safe, robust native scan fallback (Regular Expression parser)
+      if (!generatedOutput) {
+        const parsedFiles: any[] = [];
+        const parsedAnchors: any[] = [];
+
+        files.forEach((file: any) => {
+          let lineAdded = false;
+          const originalLines = file.content.split("\n");
+          const modifiedLines: string[] = [];
+
+          const lowerName = file.name.toLowerCase();
+          
+          // Let's analyze line by line
+          for (let i = 0; i < originalLines.length; i++) {
+            const line = originalLines[i];
+            
+            // Check for functional matches to place anchors
+            if (!lineAdded) {
+              let tagId = "";
+              let tagName = "";
+              let tagType = "Business Logic";
+              let tagPurpose = "";
+              let tagSeverity: "low" | "medium" | "high" = "medium";
+
+              if (line.includes("auth") || line.includes("login") || line.includes("protect") || line.includes("session") || line.includes("Crypto")) {
+                tagId = `SEC-GATE-${file.name.split(".")[0].toUpperCase()}`;
+                tagName = `Security Guard for ${file.name}`;
+                tagType = "Security Check";
+                tagPurpose = "Verifies user access controls, authentications, or token layers.";
+                tagSeverity = "high";
+              } else if (line.includes("db.") || line.includes("query") || line.includes("find") || line.includes("connect") || line.includes("save") || line.includes("insert")) {
+                tagId = `DB-STORE-${file.name.split(".")[0].toUpperCase()}`;
+                tagName = `Database Core Sink in ${file.name}`;
+                tagType = "Database Query";
+                tagPurpose = "Manages transactional writes or query retrievals across system stores.";
+                tagSeverity = "medium";
+              } else if (line.includes("fetch") || line.includes("axios") || line.includes("api.") || line.includes("http")) {
+                tagId = `API-OUT-${file.name.split(".")[0].toUpperCase()}`;
+                tagName = `External Outpost Connect in ${file.name}`;
+                tagType = "External API";
+                tagPurpose = "Initiates external HTTPS payloads to remote services and handles replies.";
+                tagSeverity = "medium";
+              } else if (line.includes("warning") || line.includes("deprecated") || line.includes("todo") || line.includes("legacy")) {
+                tagId = `DEP-WARN-${file.name.split(".")[0].toUpperCase()}`;
+                tagName = `Service Deprecation Guard in ${file.name}`;
+                tagType = "Deprecated Warning";
+                tagPurpose = "Tracks legacy system codes to prevent usage inside standard core pipelines.";
+                tagSeverity = "low";
+              }
+
+              if (tagId !== "" && !parsedAnchors.some(a => a.id === tagId)) {
+                // Add the anchor comment!
+                const commentPrefix = lowerName.endsWith(".py") || lowerName.endsWith(".yaml") || lowerName.endsWith(".yml") ? "#" : "//";
+                modifiedLines.push(`${commentPrefix} @anchor[${tagId}] - ${tagName}`);
+                lineAdded = true;
+                
+                parsedAnchors.push({
+                  id: tagId,
+                  name: tagName,
+                  type: tagType,
+                  file: file.name,
+                  purpose: tagPurpose,
+                  severity: tagSeverity,
+                  createdBy: "AnchorMesh Heuristic Scanner",
+                  createdAt: new Date().toISOString()
+                });
+              }
+            }
+            modifiedLines.push(line);
+          }
+
+          parsedFiles.push({
+            name: file.name,
+            content: modifiedLines.join("\n"),
+            description: file.description || "Ingested user code file."
+          });
+        });
+
+        generatedOutput = {
+          files: parsedFiles,
+          anchors: parsedAnchors
+        };
+      }
+
+      return res.status(200).json({
+        success: true,
+        engine: usedGemini ? "Gemini 3.5 Auto-scan" : "AnchorMesh Local Engine",
+        files: generatedOutput.files,
+        anchors: generatedOutput.anchors
+      });
+
+    } catch (error: any) {
+      console.error(error);
+      return res.status(500).json({ error: error.message || "Failed to analyze codebase folders." });
+    }
+  });
+
   // Serve static assets in production, otherwise use Vite middleware
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

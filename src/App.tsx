@@ -19,8 +19,11 @@ import {
   Database,
   Download,
   Copy,
-  Check
+  Check,
+  FileSpreadsheet,
+  FolderArchive
 } from "lucide-react";
+import JSZip from "jszip";
 
 import { CodeFile, AnchorTag, AnchorTagType, TriggerRule, TagVariable } from "./types";
 import { INITIAL_FILES, INITIAL_AN_TAGS, INITIAL_TRIGGERS, INITIAL_VARIABLES } from "./initialData";
@@ -39,8 +42,10 @@ export default function App() {
   // Active UI views
   const [selectedFileName, setSelectedFileName] = useState<string>("api-gateway.ts");
   const [activeTab, setActiveTab] = useState<"code" | "meta">("code"); // toggles details workspace pane
-  const [panelTab, setPanelTab] = useState<"simulator" | "manifest">("simulator");
+  const [panelTab, setPanelTab] = useState<"simulator" | "manifest" | "cursorrules" | "skills">("simulator");
   const [copiedManifest, setCopiedManifest] = useState<boolean>(false);
+  const [copiedRules, setCopiedRules] = useState<boolean>(false);
+  const [copiedSkills, setCopiedSkills] = useState<boolean>(false);
   
   // Agent simulator state
   const [agentPrompt, setAgentPrompt] = useState<string>("");
@@ -86,6 +91,119 @@ export default function App() {
     navigator.clipboard.writeText(compiledManifestJson);
     setCopiedManifest(true);
     setTimeout(() => setCopiedManifest(false), 2000);
+  };
+
+  // Compile highly-optimized .cursorrules text based on live register anchors
+  const compiledCursorRulesText = useMemo(() => {
+    return `# AnchorMesh Governance Configuration for Cursor IDE & AI Agents
+# Generated: ${new Date().toISOString()}
+
+You are an expert AI software agent integrated with AnchorMesh registry mapping.
+By loading this instructions map, you gain deterministic coordinates to target edits with 0% token waste.
+
+## Active Code Anchors Registry
+${tags.length > 0 
+  ? tags.map(t => `- **@anchor[${t.id}]** in file \`${t.file}\` (${t.type}): ${t.purpose}`).join("\n")
+  : "- No active code anchors are currently registered in this workspace."
+}
+
+## Agent Directives & Enforcement
+1. **Targeted Retrieval Checkpoints**: Before executing edits on features associated with the anchors listed above, you MUST locate that specific \`@anchor[ID]\` comment line to inspect the surrounding context block.
+2. **Comment Preservation**: Do NOT modify, delete, or obstruct any existing \`@anchor[...]\` annotations in comments. Doing so damages synchronization with our central environment manifest.
+3. **Registry Compliance**: Keep your action plans strictly centered within the anchoring coordinates to avoid sprawling codebase token consumption.
+4. If asked to modify gateways, write matching annotations and log them in \`anchor-tag-manifest.json\` schema.`;
+  }, [tags]);
+
+  const handleCopyCursorRules = () => {
+    navigator.clipboard.writeText(compiledCursorRulesText);
+    setCopiedRules(true);
+    setTimeout(() => setCopiedRules(false), 2000);
+  };
+
+  const handleDownloadCursorRules = () => {
+    const blob = new Blob([compiledCursorRulesText], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = ".cursorrules";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  // Compile Claude Projects/Custom Prompt Skill Instruction manual mapping
+  const compiledClaudeSkillsText = useMemo(() => {
+    return `# Dynamic Codebase Ingestion Manual: Claude Project Custom Skills
+# Generated: ${new Date().toISOString()}
+
+Add this markdown manual to your Claude Project Custom Instructions or Project Knowledge files to enable deterministic skill actions.
+
+---
+
+## 🛠️ INGESTION LAYER SKILLS: deterministically query code anchor-mesh
+
+You are equipped with the AnchorMesh map of this repository. When asked to audit, secure, or refactor, skip blind file searches. Route focus directly to these coordinates:
+
+${tags.length > 0
+  ? tags.map(t => `### Skill Action: Operate on ${t.name} (Code Anchor: @anchor[${t.id}])
+- **Associated File Location**: \`${t.file}\`
+- **Functional Target Purpose**: ${t.purpose} (Category: \`${t.type}\`)
+- **Severity Classification**: \`${t.severity.toUpperCase()}\`
+- **Execution Recipe**: Open the associated file \`${t.file}\`, find the comment \`@anchor[${t.id}]\`, inspect the target block, and complete edits there.
+`).join("\n")
+  : "### [Warning] No Active Anchors Configured in Workspace!\nMap anchors in the AnchorMesh interface first to register skills."
+}
+
+## ⚖️ Governance Policy
+- Do not touch, comment out, or alter comment anchor structures. Keep code, manifest records, and instructions perfectly locked.`;
+  }, [tags]);
+
+  const handleCopyClaudeSkills = () => {
+    navigator.clipboard.writeText(compiledClaudeSkillsText);
+    setCopiedSkills(true);
+    setTimeout(() => setCopiedSkills(false), 2000);
+  };
+
+  const handleDownloadClaudeSkills = () => {
+    const blob = new Blob([compiledClaudeSkillsText], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "anchormesh-claude-skills.md";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  // Client-side ZIP packager of the fully annotated codebase
+  const handleDownloadAnnotatedCodebaseZip = async () => {
+    try {
+      const zip = new JSZip();
+      
+      // Pack codebase files
+      files.forEach((f) => {
+        zip.file(f.name, f.content);
+      });
+      
+      // Pack metadata files
+      zip.file("anchor-tag-manifest.json", compiledManifestJson);
+      zip.file(".cursorrules", compiledCursorRulesText);
+      zip.file("claude-project-instructions.md", compiledClaudeSkillsText);
+      
+      const zipBlob = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(zipBlob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `anchormesh-annotated-project-${Date.now()}.zip`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      alert("ZIP Packer failed to compile folder: " + err.message);
+    }
   };
 
   // Active interactive selections
@@ -242,6 +360,14 @@ export default function App() {
     setTags((prev) => prev.filter((t) => t.id !== id));
   };
 
+  const handleIngestCodebase = (newFiles: CodeFile[], newTags: AnchorTag[]) => {
+    setFiles(newFiles);
+    if (newFiles.length > 0) {
+      setSelectedFileName(newFiles[0].name);
+    }
+    setTags(newTags || []);
+  };
+
   const handleToggleTrigger = (id: string) => {
     setTriggers((prev) =>
       prev.map((t) => (t.id === id ? { ...t, isActive: !t.isActive } : t))
@@ -365,6 +491,7 @@ export default function App() {
               onSelectFile={setSelectedFileName}
               onCreateFile={handleCreateFile}
               onDeleteFile={handleDeleteFile}
+              onIngestCodebase={handleIngestCodebase}
               tags={tags}
             />
           </div>
@@ -471,33 +598,53 @@ export default function App() {
 
         {/* Row 2 Middle: Dynamic Agent Workspace AI Simulator and Manifest Exporter Term (Col span 5) */}
         <section className="col-span-12 lg:col-span-5 bg-[#0b0c0d] border border-slate-900 rounded-2xl flex flex-col overflow-hidden shadow-xl" id="bento-query-agent">
-          <div className="p-4 border-b border-slate-900 flex flex-col sm:flex-row justify-between items-start sm:items-center bg-slate-900/10 gap-2">
+          <div className="p-4 border-b border-slate-900 flex flex-col xl:flex-row justify-between items-start xl:items-center bg-slate-900/10 gap-2">
             <div className="flex items-center gap-2">
               <Terminal className="w-4 h-4 text-indigo-400" />
-              <h2 className="text-xs font-bold uppercase tracking-widest text-slate-400">AI AGENT DETERMINISTIC RUNTIME</h2>
+              <h2 className="text-xs font-bold uppercase tracking-widest text-slate-400">AGENT INTEGRATION REGISTRY</h2>
             </div>
             
             {/* Elegant Tab Switchers */}
-            <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-850">
+            <div className="flex flex-wrap lg:flex-nowrap bg-slate-950 p-1 rounded-xl border border-slate-850 gap-1">
               <button
                 onClick={() => setPanelTab("simulator")}
-                className={`px-3 py-1 text-[10px] uppercase font-bold rounded-lg cursor-pointer transition-all ${
+                className={`px-2 py-1 text-[9px] uppercase font-bold rounded-lg cursor-pointer transition-all ${
                   panelTab === "simulator"
                     ? "bg-indigo-600/80 text-white shadow-sm"
                     : "text-slate-500 hover:text-slate-300"
                 }`}
               >
-                Agent Simulator
+                Simulator
               </button>
               <button
                 onClick={() => setPanelTab("manifest")}
-                className={`px-3 py-1 text-[10px] uppercase font-bold rounded-lg cursor-pointer transition-all ${
+                className={`px-2 py-1 text-[9px] uppercase font-bold rounded-lg cursor-pointer transition-all ${
                   panelTab === "manifest"
                     ? "bg-indigo-600/80 text-white shadow-sm"
                     : "text-slate-500 hover:text-slate-300"
                 }`}
               >
-                Download Manifest
+                JSON Manifest
+              </button>
+              <button
+                onClick={() => setPanelTab("cursorrules")}
+                className={`px-2 py-1 text-[9px] uppercase font-bold rounded-lg cursor-pointer transition-all ${
+                  panelTab === "cursorrules"
+                    ? "bg-indigo-600/80 text-white shadow-sm"
+                    : "text-slate-500 hover:text-slate-300"
+                }`}
+              >
+                .cursorrules
+              </button>
+              <button
+                onClick={() => setPanelTab("skills")}
+                className={`px-2 py-1 text-[9px] uppercase font-bold rounded-lg cursor-pointer transition-all ${
+                  panelTab === "skills"
+                    ? "bg-indigo-600/80 text-white shadow-sm"
+                    : "text-slate-500 hover:text-slate-300"
+                }`}
+              >
+                Claude Skills
               </button>
             </div>
           </div>
@@ -583,9 +730,9 @@ export default function App() {
           {/* Tab Content B: Live anchor-tag-manifest.json Exporter */}
           {panelTab === "manifest" && (
             <div className="p-5 flex-1 flex flex-col space-y-4 font-sans text-xs">
-              <div className="bg-indigo-950/20 border border-indigo-900/30 p-3.5 rounded-xl text-[11px] text-indigo-200 leading-relaxed">
+              <div className="bg-indigo-950/20 border border-indigo-900/30 p-3 rounded-xl text-[11px] text-indigo-200 leading-relaxed">
                 <span className="font-bold text-indigo-400 block mb-0.5">🚀 Direct Ingestion Manifest ready!</span>
-                Feed this compiled <code className="bg-indigo-950 px-1 py-0.5 rounded border border-indigo-900 text-white">anchor-tag-manifest.json</code> into any AI-agentic coding system (such as custom agents, Cursor context files, or terminal environments) to guide automatic refactoring deterministically.
+                Feed this compiled <code className="bg-indigo-950 px-1 py-0.5 rounded border border-indigo-900 text-white">anchor-tag-manifest.json</code> into any AI system.
               </div>
 
               {/* Dynamic JSON Viewport */}
@@ -629,28 +776,130 @@ export default function App() {
             </div>
           )}
 
+          {/* Tab Content C: .cursorrules Exporter */}
+          {panelTab === "cursorrules" && (
+            <div className="p-5 flex-1 flex flex-col space-y-4 font-sans text-xs">
+              <div className="bg-indigo-950/20 border border-indigo-900/30 p-3 rounded-xl text-[11px] text-indigo-200 leading-relaxed">
+                <span className="font-bold text-indigo-400 block mb-0.5">📂 Cursor Rules Configuration</span>
+                Place this `.cursorrules` file at the root of your local workspace. It forces any LLM running locally in Cursor to strictly detect and obey registered anchor files.
+              </div>
+
+              {/* Rules Viewport */}
+              <div className="relative group flex-1 min-h-[180px] flex flex-col bg-slate-950 border border-slate-900 rounded-xl overflow-hidden shadow-inner">
+                <div className="p-2.5 bg-slate-900/60 border-b border-slate-900 flex justify-between items-center text-[10px] text-slate-400 font-mono">
+                  <span>LIVE GENERATED .CURSORRULES</span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleCopyCursorRules}
+                      className="px-2.5 py-1 bg-slate-950 hover:bg-slate-800 text-slate-300 hover:text-white rounded border border-slate-800 cursor-pointer flex items-center gap-1.5 transition-colors"
+                    >
+                      {copiedRules ? (
+                        <>
+                          <Check className="w-3 h-3 text-emerald-400" />
+                          <span className="text-emerald-400 font-semibold font-sans">Copied!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3 h-3 text-slate-400" />
+                          <span className="font-sans">Copy Rules</span>
+                        </>
+                      )}
+                    </button>
+                    
+                    <button
+                      onClick={handleDownloadCursorRules}
+                      className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded border border-indigo-700 cursor-pointer flex items-center gap-1.5 transition-colors font-sans font-semibold"
+                    >
+                      <Download className="w-3 h-3" />
+                      <span>Download</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex-1 p-3 overflow-y-auto font-mono text-[10px] text-indigo-200 leading-relaxed max-h-[220px] select-text scrollbar-thin">
+                  <pre className="whitespace-pre-wrap">{compiledCursorRulesText}</pre>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Tab Content D: Claude Project Skills */}
+          {panelTab === "skills" && (
+            <div className="p-5 flex-1 flex flex-col space-y-4 font-sans text-xs">
+              <div className="bg-indigo-950/20 border border-indigo-900/30 p-3 rounded-xl text-[11px] text-indigo-200 leading-relaxed">
+                <span className="font-bold text-indigo-400 block mb-0.5">🧠 Claude Projects & Custom Instructions</span>
+                Upload this instructions manual as a Project Knowledge source. Claude will act as a specialized operator with pre-baked recipes targeting specific files.
+              </div>
+
+              {/* Skills Viewport */}
+              <div className="relative group flex-1 min-h-[180px] flex flex-col bg-slate-950 border border-slate-900 rounded-xl overflow-hidden shadow-inner">
+                <div className="p-2.5 bg-slate-900/60 border-b border-slate-900 flex justify-between items-center text-[10px] text-slate-400 font-mono">
+                  <span>LIVE GENERATED CLAUDE SKILLS</span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleCopyClaudeSkills}
+                      className="px-2.5 py-1 bg-slate-950 hover:bg-slate-800 text-slate-300 hover:text-white rounded border border-slate-800 cursor-pointer flex items-center gap-1.5 transition-colors"
+                    >
+                      {copiedSkills ? (
+                        <>
+                          <Check className="w-3 h-3 text-emerald-400" />
+                          <span className="text-emerald-400 font-semibold font-sans">Copied!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3 h-3 text-slate-400" />
+                          <span className="font-sans">Copy Skills</span>
+                        </>
+                      )}
+                    </button>
+                    
+                    <button
+                      onClick={handleDownloadClaudeSkills}
+                      className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded border border-indigo-700 cursor-pointer flex items-center gap-1.5 transition-colors font-sans font-semibold"
+                    >
+                      <Download className="w-3 h-3" />
+                      <span>Download</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex-1 p-3 overflow-y-auto font-mono text-[10px] text-indigo-200 leading-relaxed max-h-[220px] select-text scrollbar-thin">
+                  <pre className="whitespace-pre-wrap">{compiledClaudeSkillsText}</pre>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Workspace Controls Footer */}
           <div className="p-3 bg-indigo-950/20 border-t border-slate-900/80 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <div className="w-1.5 h-1.5 bg-indigo-400 animate-ping rounded-full"></div>
               <span className="text-[10px] text-slate-400 font-sans font-medium">
-                {panelTab === "simulator" ? "Ready for AI refactoring simulations." : "Manifest automatically stays in sync."}
+                {panelTab === "simulator" ? "Ready for AI refactoring simulations." : "Registry configuration generated live."}
               </span>
             </div>
-            {panelTab === "simulator" ? (
-              <button 
-                onClick={() => {
-                  setAgentPrompt("Verify all cryptographic hash signatures inside our billing ledger or secure router gates");
-                }}
-                className="text-[9px] underline text-indigo-400 hover:text-indigo-300 font-sans cursor-pointer font-bold uppercase"
+            
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleDownloadAnnotatedCodebaseZip}
+                className="bg-indigo-600 hover:bg-indigo-500 text-white font-sans font-extrabold text-[10px] tracking-wide uppercase px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-md shadow-indigo-950 transition-colors cursor-pointer"
+                title="Download entire codebase annotated with anchors + manifest + rules in a ZIP file!"
               >
-                Fill Sample Task
+                <FolderArchive className="w-3.5 h-3.5 text-indigo-200" />
+                <span>Bundle ZIP Export</span>
               </button>
-            ) : (
-              <span className="text-[10px] text-indigo-400 font-mono font-bold">
-                {tags.length} Anchors Registered
-              </span>
-            )}
+              
+              {panelTab === "simulator" && (
+                <button 
+                  onClick={() => {
+                    setAgentPrompt("Verify all cryptographic hash signatures inside our billing ledger or secure router gates");
+                  }}
+                  className="text-[9px] underline text-indigo-400 hover:text-indigo-300 font-sans cursor-pointer font-bold uppercase"
+                >
+                  Fill Sample Task
+                </button>
+              )}
+            </div>
           </div>
         </section>
 
